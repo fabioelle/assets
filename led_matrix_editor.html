@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Editor Matrice LED 8×12</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;margin:18px;color:#111}
+  h1{margin:0 0 6px;font-size:20px}
+  p.lead{margin:0 0 14px;color:#444}
+  .topbar{display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  .grid{display:grid;grid-template-columns:repeat(12,28px);gap:6px;background:#f7f7f7;padding:12px;border-radius:8px;box-shadow:0 1px 0 rgba(0,0,0,0.05)}
+  .cell{width:28px;height:28px;border-radius:4px;border:1px solid #ccc;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:700;color:#777;user-select:none}
+  .cell.on{background:#f7d13d;border-color:#e0a800;color:#222;box-shadow:inset 0 -2px 0 rgba(0,0,0,0.08)}
+  .controls{display:flex;gap:8px;flex-wrap:wrap}
+  button{background:#0b72ff;border:none;color:white;padding:8px 10px;border-radius:6px;cursor:pointer}
+  button.ghost{background:#efefef;color:#222;border:1px solid #ddd}
+  .frames{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .frame-item{padding:8px;border-radius:8px;border:1px solid #ddd;background:#fff;min-width:120px}
+  .frame-actions{display:flex;gap:6px;margin-top:8px}
+  label{display:flex;gap:6px;align-items:center}
+  textarea{width:100%;height:110px;margin-top:8px;font-family:monospace}
+  .footer{margin-top:12px;color:#555;font-size:14px}
+  .small{font-size:13px;color:#666}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  input[type=number]{width:72px;padding:6px;border-radius:6px;border:1px solid #ddd}
+  .export-box{display:flex;gap:8px;flex-direction:column}
+  .code{background:#0f1720;color:#e6eef8;padding:8px;border-radius:6px;font-family:monospace;white-space:pre;overflow:auto}
+</style>
+</head>
+<body>
+<h1>Editor Matrice LED 8×12</h1>
+<p class="lead">Disegna pixel, crea più frame, prova l'animazione e copia il formato 0/1 o il codice Arduino pronto.</p>
+
+<div class="topbar">
+  <div class="controls">
+    <button id="addFrameBtn">Aggiungi frame</button>
+    <button id="dupFrameBtn" class="ghost">Duplica</button>
+    <button id="delFrameBtn" class="ghost">Elimina</button>
+    <button id="clearBtn" class="ghost">Pulisci</button>
+    <button id="invertBtn" class="ghost">Inverti</button>
+  </div>
+
+  <div class="row" style="margin-left:12px">
+    <label class="small">Velocità (ms): <input id="speed" type="number" value="300" min="50"></label>
+    <button id="playBtn">▶ Play</button>
+    <button id="stopBtn" class="ghost">■ Stop</button>
+  </div>
+</div>
+
+<div class="row">
+  <label>Preset: 
+    <select id="presetSelect">
+      <option value="">-- seleziona --</option>
+      <option value="cuore">Cuore</option>
+      <option value="smile">Smile</option>
+      <option value="freccia_dx">Freccia dx</option>
+      <option value="freccia_sx">Freccia sx</option>
+      <option value="A">A</option>
+      <option value="B">B</option>
+      <option value="cuore2">Cuore2</option>
+      <option value="stella">Stella</option>
+      <option value="casa">Casa</option>
+      <option value="campanella">Campanella</option>
+      <option value="cuore_piccolo">Cuore Piccolo</option>
+      <option value="freccia_su">Freccia Su</option>
+      <option value="freccia_giu">Freccia Giù</option>
+      <!-- altri -->
+    </select>
+  </label>
+  <button id="loadPresetBtn">Carica preset</button>
+</div>
+
+<div id="grid" class="grid" aria-label="Matrice 8 per 12"></div>
+
+<div class="frames" id="framesContainer" aria-live="polite"></div>
+
+<div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
+  <div style="flex:1;min-width:320px">
+    <h3>Esporta (formato 0/1)</h3>
+    <div class="export-box">
+      <button id="exportTextBtn">Copia testo (8 righe × 12 colonne)</button>
+      <button id="exportArduinoBtn" class="ghost">Copia codice Arduino (.ino)</button>
+      <button id="downloadBtn" class="ghost">Scarica .txt</button>
+      <textarea id="exportArea" readonly></textarea>
+    </div>
+  </div>
+
+  <div style="flex:1;min-width:320px">
+    <h3>Esempio codice Arduino</h3>
+    <div class="code" id="arduinoCode">// il codice apparirà qui</div>
+  </div>
+</div>
+
+<div class="footer">
+  <p class="small">Istruzioni rapide: clicca le celle per accendere/spegnere. Aggiungi più frame per creare animazioni. Usa "Copia codice Arduino" per incollare direttamente nello sketch.</p>
+  <p class="small">Formato: ogni riga è 12 caratteri (0 = spento, 1 = acceso). Ci sono 8 righe per frame.</p>
+</div>
+
+<script>
+const ROWS = 8;
+const COLS = 12;
+
+let frames = [];
+let currentFrame = 0;
+let playing = false;
+let playInterval = null;
+
+const gridEl = document.getElementById('grid');
+const framesContainer = document.getElementById('framesContainer');
+const exportArea = document.getElementById('exportArea');
+const arduinoCodeEl = document.getElementById('arduinoCode');
+
+// All’inizio del <script>:
+const PRESETS = {
+  cuore: [
+    "001100110000",
+    "011110111100",
+    "111111111100",
+    "111111111100",
+    "011111111000",
+    "001111110000",
+    "000111100000",
+    "000011000000"
+  ],
+  smile: [
+    "000000000000",
+    "011000011000",
+    "011000011000",
+    "000000000000",
+    "100000000001",
+    "011111111110",
+    "001111111100",
+    "000111110000"
+  ],
+  freccia_dx: [
+    "000001000000",
+    "000011000000",
+    "000111100000",
+    "111111111100",
+    "000111100000",
+    "000011000000",
+    "000001000000",
+    "000000000000"
+  ],
+  freccia_sx: [
+    "000010000000",
+    "000110000000",
+    "001111000000",
+    "111111111000",
+    "001111000000",
+    "000110000000",
+    "000010000000",
+    "000000000000"
+  ],
+  A: [
+    "000111100000",
+    "001000010000",
+    "010000001000",
+    "010000001000",
+    "011111111000",
+    "010000001000",
+    "010000001000",
+    "000000000000"
+  ],
+  B: [
+    "011111110000",
+    "010000001000",
+    "010000001000",
+    "011111110000",
+    "010000001000",
+    "010000001000",
+    "011111110000",
+    "000000000000"
+  ],
+  cuore2: [
+    "000110110000",
+    "001111111000",
+    "011111111100",
+    "011111111100",
+    "001111111000",
+    "000111110000",
+    "000011100000",
+    "000001000000"
+  ],
+  stella: [
+    "000010000000",
+    "001111100000",
+    "000111000000",
+    "111111111100",
+    "000111000000",
+    "001111100000",
+    "000010000000",
+    "000000000000"
+  ],
+  casa: [
+    "000001000000",
+    "000011100000",
+    "000111110000",
+    "001111111000",
+    "011111111100",
+    "010101010100",
+    "011111111100",
+    "000000000000"
+  ],
+  campanella: [
+    "000011000000",
+    "000111100000",
+    "001111110000",
+    "001111110000",
+    "001111110000",
+    "000111100000",
+    "000011000000",
+    "000001000000"
+  ],
+  cuore_piccolo: [
+    "000000000000",
+    "001100110000",
+    "011111111000",
+    "011111111000",
+    "001111110000",
+    "000111100000",
+    "000011000000",
+    "000000000000"
+  ],
+  freccia_su: [
+    "000010000000",
+    "000111000000",
+    "001111100000",
+    "111111111100",
+    "000010000000",
+    "000010000000",
+    "000010000000",
+    "000000000000"
+  ],
+  freccia_giu: [
+    "000010000000",
+    "000010000000",
+    "000010000000",
+    "111111111100",
+    "001111100000",
+    "000111000000",
+    "000010000000",
+    "000000000000"
+  ]
+};
+
+
+
+function makeEmptyFrame(){
+  return Array.from({length: ROWS}, ()=> Array.from({length: COLS}, ()=>0));
+}
+
+function renderGrid(){
+  gridEl.innerHTML = '';
+  const frame = frames[currentFrame];
+  for(let r=0;r<ROWS;r++){
+    for(let c=0;c<COLS;c++){
+      const btn = document.createElement('div');
+      btn.className = 'cell' + (frame[r][c] ? ' on' : '');
+      btn.dataset.r = r; btn.dataset.c = c;
+      btn.title = `${r},${c}`;
+      btn.addEventListener('click', ()=> {
+        frame[r][c] = frame[r][c] ? 0 : 1;
+        btn.classList.toggle('on');
+        updateAllOutputs();
+        renderFramesList();
+      });
+      gridEl.appendChild(btn);
+    }
+  }
+}
+
+function renderFramesList(){
+  framesContainer.innerHTML = '';
+  frames.forEach((f, idx) => {
+    const item = document.createElement('div');
+    item.className = 'frame-item';
+    if(idx===currentFrame) item.style.boxShadow = '0 0 0 3px rgba(11,114,255,0.12)';
+    const title = document.createElement('div');
+    title.textContent = `Frame ${idx+1}`;
+    item.appendChild(title);
+
+    const mini = document.createElement('div');
+    mini.style.display = 'grid';
+    mini.style.gridTemplateColumns = `repeat(${COLS},8px)`;
+    mini.style.gap = '2px';
+    mini.style.marginTop = '8px';
+    mini.style.marginBottom = '6px';
+    mini.style.width = `${COLS*8 + (COLS-1)*2}px`;
+    for(let r=0;r<ROWS;r++){
+      for(let c=0;c<COLS;c++){
+        const p = document.createElement('div');
+        p.style.width='8px'; p.style.height='8px'; p.style.borderRadius='2px';
+        p.style.background = f[r][c] ? '#f7d13d' : '#fff';
+        p.style.border = '1px solid #ddd';
+        mini.appendChild(p);
+      }
+    }
+    item.appendChild(mini);
+
+    const actions = document.createElement('div');
+    actions.className = 'frame-actions';
+    const selBtn = document.createElement('button'); selBtn.textContent='Seleziona';
+    selBtn.className='ghost'; selBtn.addEventListener('click', ()=>{ currentFrame = idx; renderGrid(); renderFramesList(); });
+    const dupBtn = document.createElement('button'); dupBtn.textContent='Duplica'; dupBtn.addEventListener('click', ()=>{ frames.splice(idx+1,0, JSON.parse(JSON.stringify(f))); currentFrame = idx+1; renderGrid(); renderFramesList(); updateAllOutputs();});
+    const delBtn = document.createElement('button'); delBtn.textContent='Elimina'; delBtn.className='ghost'; delBtn.addEventListener('click', ()=>{ if(frames.length>1) { frames.splice(idx,1); currentFrame = Math.max(0,currentFrame-1); renderGrid(); renderFramesList(); updateAllOutputs(); }});
+    actions.appendChild(selBtn); actions.appendChild(dupBtn); actions.appendChild(delBtn);
+    item.appendChild(actions);
+
+    framesContainer.appendChild(item);
+  });
+}
+
+function updateAllOutputs(){
+  const text = framesToSingleLine(); // framesToTextLine();
+  exportArea.value = text;
+  arduinoCodeEl.textContent = generateArduinoCode();
+}
+
+function framesToText(){
+  return frames.map(f=>{
+    return f.map(r=> r.map(v=> v? '1':'0').join(''));
+  }).join('\\n---\\n');
+}
+
+function framesToSingleLine(){
+  return frames.map(f => 
+    f.map(r => r.map(v => v ? '1' : '0').join('')).join('') // concatena tutte le righe
+  ).join('\n'); // ogni frame su una riga separata
+}
+
+function generateArduinoCode(){
+  // produce code for frames array uint8_t frames[NUM][8][12] = {...}
+  let out = '';
+  out += `// Copia questo blocco nello sketch Arduino\\n`;
+  out += `const uint8_t FRAMES = ${frames.length};\\n`;
+  out += `const uint8_t FRAME_HEIGHT = ${ROWS};\\n`;
+  out += `const uint8_t FRAME_WIDTH = ${COLS};\\n`;
+  out += `const uint8_t frames[FRAMES][FRAME_HEIGHT][FRAME_WIDTH] = {\\n`;
+  frames.forEach((f,idx)=>{
+    out += '  {\\n';
+    f.forEach((r)=>{
+      out += '    { ' + r.map(v=> v? '1':'0').join(', ') + ' },\\n';
+    });
+    out += '  }' + (idx<frames.length-1 ? ',' : '') + '\\n';
+  });
+  out += '};\\n';
+  out += `\\n// Esempio: caricare il frame 0 nella tua matrice (dipende dalla libreria che usi)\\n`;
+  out += `// matrix.loadFrame(frames[0]);\\n`;
+  return out;
+}
+
+document.getElementById('addFrameBtn').addEventListener('click', ()=>{
+  frames.push(makeEmptyFrame());
+  currentFrame = frames.length-1;
+  renderGrid(); renderFramesList(); updateAllOutputs();
+});
+document.getElementById('dupFrameBtn').addEventListener('click', ()=>{
+  frames.splice(currentFrame+1,0, JSON.parse(JSON.stringify(frames[currentFrame])));
+  currentFrame++;
+  renderGrid(); renderFramesList(); updateAllOutputs();
+});
+document.getElementById('delFrameBtn').addEventListener('click', ()=>{
+  if(frames.length>1){ frames.splice(currentFrame,1); currentFrame = Math.max(0,currentFrame-1); renderGrid(); renderFramesList(); updateAllOutputs(); }
+});
+document.getElementById('clearBtn').addEventListener('click', ()=>{
+  frames[currentFrame] = makeEmptyFrame(); renderGrid(); updateAllOutputs();
+});
+document.getElementById('invertBtn').addEventListener('click', ()=>{
+  frames[currentFrame] = frames[currentFrame].map(r=> r.map(v=> v?0:1)); renderGrid(); updateAllOutputs();
+});
+
+document.getElementById('exportTextBtn').addEventListener('click', ()=>{
+  navigator.clipboard.writeText(exportArea.value).then(()=> alert('Testo copiato negli appunti'));
+});
+document.getElementById('exportArduinoBtn').addEventListener('click', ()=>{
+  navigator.clipboard.writeText(arduinoCodeEl.textContent).then(()=> alert('Codice Arduino copiato negli appunti'));
+});
+document.getElementById('downloadBtn').addEventListener('click', ()=>{
+  const blob = new Blob([exportArea.value], {type:'text/plain'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'matrix_frames.txt'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+});
+
+document.getElementById('playBtn').addEventListener('click', ()=>{
+  if(playing) return;
+  playing = true;
+  let idx = 0;
+  const speedInput = document.getElementById('speed');
+  playInterval = setInterval(()=>{
+    currentFrame = idx % frames.length;
+    renderGrid(); renderFramesList();
+    idx++;
+  }, Number(speedInput.value) || 300);
+});
+document.getElementById('stopBtn').addEventListener('click', ()=>{
+  clearInterval(playInterval);
+  playing = false;
+});
+
+document.getElementById('speed').addEventListener('change', ()=>{
+  if(playing){
+    clearInterval(playInterval);
+    playing = false;
+    document.getElementById('playBtn').click();
+  }
+});
+
+document.getElementById('loadPresetBtn').addEventListener('click', ()=>{
+  const sel = document.getElementById('presetSelect').value;
+  if (sel && PRESETS[sel]) {
+    const arr = PRESETS[sel];
+    // Sostituisci il frame corrente con questo
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        frames[currentFrame][r][c] = arr[r][c] === '1' ? 1 : 0;
+      }
+    }
+    renderGrid();
+    updateAllOutputs();
+    renderFramesList();
+  }
+});
+
+// init with one frame and some examples
+frames.push(makeEmptyFrame());
+const heart = [
+  "001100110000","011110111100","111111111100","111111111100",
+  "011111111000","001111110000","000111100000","000011000000"
+];
+function loadFromStrings(arr){
+  arr.forEach((row, r)=>{
+    for(let c=0;c<COLS;c++) frames[0][r][c] = row[c]==='1'?1:0;
+  });
+}
+loadFromStrings(heart);
+renderGrid();
+renderFramesList();
+updateAllOutputs();
+</script>
+</body>
+</html>
